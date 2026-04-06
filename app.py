@@ -1,6 +1,7 @@
+
 """
 TAG - Together Achieve Growth
-Enhanced Version with Real-time Updates & Better UI/UX
+Enhanced Version with Real-time Updates & NLP Features
 """
 
 import streamlit as st
@@ -14,23 +15,192 @@ import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import hashlib
 import os
+import re
+import json
+
+# ==================== NLP FUNCTIONS (Lightweight, no heavy dependencies) ====================
+
+# Career keywords for auto-detection
+CAREER_KEYWORDS = {
+    'Engineering': ['engineer', 'coding', 'programming', 'software', 'it', 'computer', 'tech', 'robotics', 'ai', 'machine learning', 'web development', 'app development', 'btech', 'be'],
+    'Medical': ['doctor', 'medical', 'mbbs', 'nurse', 'healthcare', 'hospital', 'dentist', 'pharmacy', 'bds', 'bhms', 'bams', 'veterinary', 'physician', 'surgeon'],
+    'Arts': ['arts', 'design', 'creative', 'painting', 'music', 'dance', 'theatre', 'journalism', 'mass communication', 'literature', 'fine arts', 'animation', 'graphic design'],
+    'Government Jobs': ['government', 'civil service', 'upsc', 'ssc', 'bank', 'railway', 'defence', 'police', 'ias', 'ips', 'irs', 'government exam', 'ssc cgl', 'banking'],
+    'Other': ['business', 'entrepreneur', 'sports', 'law', 'research', 'teaching', 'management', 'hotel management', 'event management', 'digital marketing']
+}
+
+# Sentiment keywords
+SENTIMENT_KEYWORDS = {
+    'confused': ['confused', 'not sure', 'dilemma', 'unclear', 'uncertain', 'which one', 'what to do', 'help me decide', 'can\'t decide'],
+    'anxious': ['worried', 'anxious', 'stressed', 'pressure', 'tension', 'nervous', 'scared', 'fear', 'anxiety', 'overwhelmed'],
+    'excited': ['excited', 'passionate', 'interested', 'love', 'enjoy', 'fascinated', 'dream', 'aspire', 'motivated', 'enthusiastic'],
+    'urgent': ['urgent', 'immediate', 'soon', 'deadline', 'fast', 'quickly', 'asap', 'emergency', 'time sensitive']
+}
+
+def simple_nlp_analysis(message):
+    """Lightweight NLP analysis using keyword matching"""
+    message_lower = message.lower()
+    
+    # 1. Auto-detect career type
+    detected_career = "Other"
+    career_confidence = 0
+    
+    for career, keywords in CAREER_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in message_lower:
+                detected_career = career
+                career_confidence += 1
+                break
+        if career_confidence > 0:
+            break
+    
+    # 2. Sentiment detection
+    sentiment = "neutral"
+    sentiment_reason = ""
+    
+    for sent_type, keywords in SENTIMENT_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in message_lower:
+                if sent_type == 'confused':
+                    sentiment = "confused"
+                    sentiment_reason = "Student appears confused about career path"
+                elif sent_type == 'anxious':
+                    sentiment = "anxious"
+                    sentiment_reason = "Student shows signs of anxiety/stress"
+                elif sent_type == 'excited':
+                    sentiment = "excited"
+                    sentiment_reason = "Student is excited and motivated"
+                elif sent_type == 'urgent':
+                    sentiment = "urgent"
+                    sentiment_reason = "Query marked as urgent"
+                break
+        if sentiment != "neutral":
+            break
+    
+    # 3. Extract key skills/interests
+    skills = []
+    skill_keywords = {
+        'Technical': ['coding', 'programming', 'math', 'science', 'computer', 'technical', 'engineering'],
+        'Creative': ['drawing', 'painting', 'writing', 'music', 'design', 'creative', 'artistic'],
+        'Analytical': ['problem solving', 'logic', 'analysis', 'research', 'analytical', 'critical thinking'],
+        'Social': ['teaching', 'helping', 'communication', 'leadership', 'social', 'people', 'team']
+    }
+    
+    for skill, keywords in skill_keywords.items():
+        for keyword in keywords:
+            if keyword in message_lower:
+                skills.append(skill)
+                break
+    
+    # 4. Calculate urgency score (1-5)
+    urgency_score = 1
+    if sentiment == "urgent":
+        urgency_score = 5
+    elif any(word in message_lower for word in ['help', 'guidance', 'advice']):
+        urgency_score = 3
+    elif any(word in message_lower for word in ['interested', 'curious', 'want to know']):
+        urgency_score = 2
+    
+    # 5. Extract key phrases (simple)
+    key_phrases = []
+    words = message_lower.split()
+    for i in range(len(words)-1):
+        phrase = f"{words[i]} {words[i+1]}"
+        if phrase in ['career path', 'which field', 'what subject', 'how to become', 'scope of', 'future of']:
+            key_phrases.append(phrase)
+    
+    return {
+        'detected_career': detected_career,
+        'career_confidence': min(career_confidence, 3),
+        'sentiment': sentiment,
+        'sentiment_reason': sentiment_reason,
+        'detected_skills': list(set(skills)),
+        'urgency_score': urgency_score,
+        'key_phrases': key_phrases[:3]
+    }
+
+def generate_smart_response(query, nlp_result):
+    """Generate intelligent response suggestion based on NLP analysis"""
+    responses = []
+    
+    # Based on sentiment
+    if nlp_result['sentiment'] == 'anxious':
+        responses.append("🌟 Don't worry! Many students have similar questions. Let me help you clarify your career path.")
+    elif nlp_result['sentiment'] == 'confused':
+        responses.append("💡 It's completely normal to be confused about career choices. Let's break this down step by step.")
+    elif nlp_result['sentiment'] == 'excited':
+        responses.append("🎉 That's great enthusiasm! Let's channel this energy into finding the perfect career path for you.")
+    
+    # Based on detected career
+    if nlp_result['detected_career'] != 'Other':
+        responses.append(f"📚 Regarding {nlp_result['detected_career']}, here are some key points to consider...")
+    
+    # Based on skills
+    if nlp_result['detected_skills']:
+        skills_str = ', '.join(nlp_result['detected_skills'])
+        responses.append(f"🔧 Based on your interest in {skills_str}, here are some career options...")
+    
+    # General helpful response
+    if not responses:
+        responses.append("Thank you for your query! Here's some guidance to help you make an informed decision.")
+    
+    return " ".join(responses)
+
+def get_career_insights(career_type):
+    """Provide career-specific insights"""
+    insights = {
+        'Engineering': {
+            'scope': 'High demand in software, hardware, AI, robotics, and core engineering sectors',
+            'exams': 'JEE Main, JEE Advanced, BITSAT, VITEEE, State engineering exams',
+            'colleges': 'IITs, NITs, BITS, IIITs, State Engineering Colleges',
+            'salary_range': '₹3-20 LPA (fresher), increases with experience',
+            'skills': 'Problem-solving, Mathematics, Programming, Logical thinking'
+        },
+        'Medical': {
+            'scope': 'Growing demand in healthcare, research, and specialized medicine',
+            'exams': 'NEET-UG, AIIMS MBBS, JIPMER, State medical exams',
+            'colleges': 'AIIMS, JIPMER, CMC Vellore, AFMC, State Medical Colleges',
+            'salary_range': '₹6-15 LPA (fresher), higher for specialists',
+            'skills': 'Empathy, Attention to detail, Memory, Scientific aptitude'
+        },
+        'Arts': {
+            'scope': 'Diverse opportunities in media, design, education, and creative industries',
+            'exams': 'DUET, BHU UET, JNUEE, CUET, University-specific exams',
+            'colleges': 'DU, JNU, BHU, Jamia Millia Islamia, Lady Shri Ram College',
+            'salary_range': '₹2-10 LPA, varies by specialization',
+            'skills': 'Creativity, Communication, Critical thinking, Adaptability'
+        },
+        'Government Jobs': {
+            'scope': 'Stable careers with job security and benefits across various departments',
+            'exams': 'UPSC CSE, SSC CGL, Banking exams (IBPS, SBI), RRB, State PSCs',
+            'colleges': 'Any recognized university (eligibility based on exam)',
+            'salary_range': '₹5-15 LPA + allowances (7th Pay Commission)',
+            'skills': 'General awareness, Aptitude, Reasoning, Communication'
+        },
+        'Other': {
+            'scope': 'Many emerging fields including business, sports, law, research, and more',
+            'exams': 'Varies by field (CLAT for Law, CAT for MBA, etc.)',
+            'colleges': 'Field-specific top institutions',
+            'salary_range': 'Varies widely by industry and role',
+            'skills': 'Field-specific skills and continuous learning'
+        }
+    }
+    return insights.get(career_type, insights['Other'])
 
 # ==================== PAGE CONFIGURATION ====================
 st.set_page_config(
-    page_title="TAG - Career Guidance",
+    page_title="TAG - Career Guidance with AI",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better UI
+# Custom CSS for better UI (same as before)
 def load_css():
     st.markdown("""
         <style>
         /* Main container styling */
-        .main {
-            padding: 0rem 1rem;
-        }
+        .main { padding: 0rem 1rem; }
         
         /* Card styling */
         .css-card {
@@ -51,8 +221,15 @@ def load_css():
             text-align: center;
             transition: transform 0.3s;
         }
-        .stat-card:hover {
-            transform: translateY(-5px);
+        .stat-card:hover { transform: translateY(-5px); }
+        
+        /* NLP Insight Card */
+        .nlp-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 1rem;
+            border-radius: 15px;
+            color: white;
+            margin-bottom: 1rem;
         }
         
         /* Button styling */
@@ -70,31 +247,6 @@ def load_css():
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
         
-        /* Success message animation */
-        @keyframes slideIn {
-            from {
-                transform: translateY(-100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
-        }
-        .stAlert {
-            animation: slideIn 0.5s ease-out;
-        }
-        
-        /* Query card styling */
-        .query-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 15px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            margin-bottom: 1rem;
-            border-left: 5px solid #667eea;
-        }
-        
         /* Badge styling */
         .badge {
             display: inline-block;
@@ -110,6 +262,13 @@ def load_css():
         .badge-government { background: #6c5ce7; color: white; }
         .badge-other { background: #a8a8a8; color: white; }
         
+        /* Sentiment badges */
+        .sentiment-confused { background: #ffa502; color: white; }
+        .sentiment-anxious { background: #ff4757; color: white; }
+        .sentiment-excited { background: #26de81; color: white; }
+        .sentiment-neutral { background: #747d8c; color: white; }
+        .sentiment-urgent { background: #e84118; color: white; }
+        
         /* Typography */
         h1 {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -117,28 +276,12 @@ def load_css():
             -webkit-text-fill-color: transparent;
             font-size: 3rem !important;
         }
-        
-        /* Sidebar styling */
-        .css-1d391kg {
-            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-        }
-        
-        /* Form styling */
-        .stTextInput > div > div > input {
-            border-radius: 10px;
-            border: 2px solid #e0e0e0;
-            transition: all 0.3s;
-        }
-        .stTextInput > div > div > input:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
-        }
         </style>
     """, unsafe_allow_html=True)
 
-# ==================== DATABASE SETUP ====================
+# ==================== DATABASE SETUP (Same as before with NLP columns) ====================
 def init_database():
-    """Initialize SQLite database with required tables"""
+    """Initialize SQLite database with required tables including NLP columns"""
     conn = sqlite3.connect('database.db', check_same_thread=False)
     c = conn.cursor()
     
@@ -154,7 +297,7 @@ def init_database():
         )
     ''')
     
-    # Create queries table with status
+    # Create queries table with NLP columns
     c.execute('''
         CREATE TABLE IF NOT EXISTS queries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,7 +308,12 @@ def init_database():
             message TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             admin_response TEXT,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            detected_career TEXT,
+            sentiment TEXT,
+            urgency_score INTEGER DEFAULT 1,
+            detected_skills TEXT,
+            nlp_insights TEXT
         )
     ''')
     
@@ -182,7 +330,7 @@ def init_database():
         )
     ''')
     
-    # Check if admin exists, if not create default admin
+    # Check if admin exists
     c.execute("SELECT * FROM users WHERE role='admin'")
     if not c.fetchone():
         admin_password = hash_password("admin123")
@@ -193,17 +341,13 @@ def init_database():
     conn.close()
 
 def hash_password(password):
-    """Hash password using bcrypt"""
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 def verify_password(password, hashed):
-    """Verify password against hash"""
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# ==================== DATABASE OPERATIONS ====================
 def create_user(name, email, password):
-    """Create a new user in database"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -217,7 +361,6 @@ def create_user(name, email, password):
                  (name, email, hashed))
         user_id = c.lastrowid
         
-        # Create welcome notification
         c.execute("INSERT INTO notifications (user_id, message, type) VALUES (?, ?, ?)",
                  (user_id, "Welcome to TAG! Start exploring career options.", "success"))
         
@@ -229,7 +372,6 @@ def create_user(name, email, password):
         conn.close()
 
 def authenticate_user(email, password):
-    """Authenticate user login"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -245,33 +387,53 @@ def authenticate_user(email, password):
         conn.close()
 
 def save_query(student_name, student_email, career_type, phone, message):
-    """Save student query to database"""
+    """Save student query with NLP analysis"""
     try:
+        # Perform NLP analysis
+        nlp_result = simple_nlp_analysis(message)
+        
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
-        c.execute('''
-            INSERT INTO queries (student_name, student_email, career_type, phone, message)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (student_name, student_email, career_type, phone, message))
         
-        # Get admin users for notification
+        # Use AI-detected career if available and confidence is good
+        final_career = career_type
+        if nlp_result['detected_career'] != 'Other' and nlp_result['career_confidence'] >= 2:
+            final_career = nlp_result['detected_career']
+        
+        c.execute('''
+            INSERT INTO queries (student_name, student_email, career_type, phone, message, 
+                               detected_career, sentiment, urgency_score, detected_skills, nlp_insights)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (student_name, student_email, final_career, phone, message,
+              nlp_result['detected_career'], nlp_result['sentiment'], 
+              nlp_result['urgency_score'], json.dumps(nlp_result['detected_skills']),
+              json.dumps(nlp_result)))
+        
+        # Get admin users for notification with priority
         c.execute("SELECT id FROM users WHERE role='admin'")
         admins = c.fetchall()
+        
+        # Add priority indicator in notification for urgent queries
+        priority_msg = f"New query from {student_name} regarding {final_career}"
+        if nlp_result['urgency_score'] >= 4:
+            priority_msg = f"🔴 URGENT: {priority_msg}"
+        elif nlp_result['sentiment'] == 'anxious':
+            priority_msg = f"🟡 ANXIOUS: {priority_msg}"
+        
         for admin in admins:
             c.execute('''
                 INSERT INTO notifications (user_id, message, type) 
                 VALUES (?, ?, ?)
-            ''', (admin[0], f"New query from {student_name} regarding {career_type}", "info"))
+            ''', (admin[0], priority_msg, "info"))
         
         conn.commit()
-        return True, "Query submitted successfully!"
+        return True, "Query submitted successfully! AI has analyzed your query."
     except Exception as e:
         return False, f"Error: {str(e)}"
     finally:
         conn.close()
 
 def get_all_queries():
-    """Retrieve all queries from database"""
     try:
         conn = sqlite3.connect('database.db')
         df = pd.read_sql_query("SELECT * FROM queries ORDER BY date DESC", conn)
@@ -282,7 +444,6 @@ def get_all_queries():
         conn.close()
 
 def get_student_queries(email):
-    """Retrieve queries for specific student"""
     try:
         conn = sqlite3.connect('database.db')
         df = pd.read_sql_query("SELECT * FROM queries WHERE student_email=? ORDER BY date DESC", conn, params=(email,))
@@ -293,7 +454,6 @@ def get_student_queries(email):
         conn.close()
 
 def delete_query(query_id):
-    """Delete a query from database"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -306,7 +466,6 @@ def delete_query(query_id):
         conn.close()
 
 def update_query_status(query_id, status, response=""):
-    """Update query status and add admin response"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -316,13 +475,11 @@ def update_query_status(query_id, status, response=""):
             WHERE id=?
         ''', (status, response, query_id))
         
-        # Get student email for notification
         c.execute("SELECT student_email FROM queries WHERE id=?", (query_id,))
         student_email = c.fetchone()[0]
         c.execute("SELECT id FROM users WHERE email=?", (student_email,))
         student_id = c.fetchone()[0]
         
-        # Notify student
         c.execute('''
             INSERT INTO notifications (user_id, message, type) 
             VALUES (?, ?, ?)
@@ -336,7 +493,6 @@ def update_query_status(query_id, status, response=""):
         conn.close()
 
 def get_unread_notifications(user_id):
-    """Get unread notifications for user"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -353,7 +509,6 @@ def get_unread_notifications(user_id):
         conn.close()
 
 def mark_notifications_read(user_id):
-    """Mark all notifications as read for user"""
     try:
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -367,7 +522,6 @@ def mark_notifications_read(user_id):
 
 # ==================== SESSION MANAGEMENT ====================
 def init_session():
-    """Initialize session state variables"""
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'user' not in st.session_state:
@@ -380,16 +534,13 @@ def init_session():
         st.session_state.notifications = []
 
 def logout():
-    """Clear session and logout"""
     st.session_state.logged_in = False
     st.session_state.user = None
     st.session_state.page = 'Home'
     st.session_state.notifications = []
     st.rerun()
 
-# ==================== UI COMPONENTS ====================
 def notification_badge():
-    """Display notification badge in sidebar"""
     if st.session_state.logged_in:
         notifications = get_unread_notifications(st.session_state.user['id'])
         if notifications:
@@ -405,7 +556,6 @@ def notification_badge():
                 st.rerun()
 
 def get_badge_class(career_type):
-    """Get CSS class for career type badge"""
     badges = {
         'Engineering': 'badge-engineering',
         'Medical': 'badge-medical',
@@ -415,12 +565,20 @@ def get_badge_class(career_type):
     }
     return badges.get(career_type, 'badge-other')
 
+def get_sentiment_class(sentiment):
+    sentiments = {
+        'confused': 'sentiment-confused',
+        'anxious': 'sentiment-anxious',
+        'excited': 'sentiment-excited',
+        'neutral': 'sentiment-neutral',
+        'urgent': 'sentiment-urgent'
+    }
+    return sentiments.get(sentiment, 'sentiment-neutral')
+
 # ==================== UI PAGES ====================
 def home_page():
-    """Enhanced home page with animations and better UI"""
     load_css()
     
-    # Hero section
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -429,8 +587,8 @@ def home_page():
                 <h1 style="font-size: 4rem; margin-bottom: 0;">TAG</h1>
                 <h2 style="color: #666; margin-top: 0;">Together Achieve Growth</h2>
                 <p style="font-size: 1.2rem; color: #444; margin: 2rem 0;">
-                    Empowering government school students with personalized career guidance 
-                    to help them make informed decisions about their future.
+                    AI-powered career guidance platform for government school students. 
+                    Get personalized career recommendations and expert advice.
                 </p>
             </div>
         """, unsafe_allow_html=True)
@@ -447,18 +605,17 @@ def home_page():
                     st.rerun()
     
     with col2:
-        # Animated stats
         st.markdown("""
             <div class="css-card">
-                <h3 style="color: white;">Platform Impact</h3>
-                <h1 style="color: white; font-size: 3rem;">1000+</h1>
-                <p>Students Guided</p>
-                <h1 style="color: white; font-size: 3rem;">50+</h1>
-                <p>Schools Reached</p>
+                <h3 style="color: white;">🤖 AI-Powered Features</h3>
+                <p>✨ Smart career detection</p>
+                <p>💭 Sentiment analysis</p>
+                <p>🎯 Skill extraction</p>
+                <p>⚡ Priority scoring</p>
+                <p>📊 Career insights</p>
             </div>
         """, unsafe_allow_html=True)
     
-    # Mission and Vision cards
     st.markdown("---")
     col1, col2 = st.columns(2)
     
@@ -466,10 +623,7 @@ def home_page():
         st.markdown("""
             <div class="stat-card">
                 <h3 style="color: #667eea;">🎯 Our Mission</h3>
-                <p style="color: #666; font-size: 1.1rem;">
-                    To provide accessible career guidance to government school students, 
-                    helping them discover their potential and make informed career choices.
-                </p>
+                <p style="color: #666;">To provide AI-powered career guidance to government school students.</p>
             </div>
         """, unsafe_allow_html=True)
     
@@ -477,39 +631,11 @@ def home_page():
         st.markdown("""
             <div class="stat-card">
                 <h3 style="color: #667eea;">👁️ Our Vision</h3>
-                <p style="color: #666; font-size: 1.1rem;">
-                    Create a future where every government school student has access to 
-                    quality career guidance, breaking barriers and enabling dreams.
-                </p>
+                <p style="color: #666;">Every student deserves quality career guidance powered by AI.</p>
             </div>
         """, unsafe_allow_html=True)
-    
-    # Recent activities with better design
-    st.markdown("---")
-    st.markdown("## 📊 Recent Activities")
-    
-    activities = [
-        {"icon": "🏫", "title": "Career Counseling Session", "location": "Govt. School, Delhi", "students": 50, "time": "2 hours ago"},
-        {"icon": "📝", "title": "Engineering Career Workshop", "location": "Online Session", "students": 100, "time": "1 day ago"},
-        {"icon": "🎓", "title": "Medical Entrance Guidance", "location": "Govt. School, Mumbai", "students": 25, "time": "2 days ago"},
-        {"icon": "💼", "title": "Government Jobs Awareness", "location": "Govt. School, Chennai", "students": 75, "time": "3 days ago"},
-    ]
-    
-    for activity in activities:
-        col1, col2, col3, col4 = st.columns([1, 3, 2, 1])
-        with col1:
-            st.markdown(f"<h2>{activity['icon']}</h2>", unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"**{activity['title']}**")
-            st.markdown(f"📍 {activity['location']}")
-        with col3:
-            st.markdown(f"👥 {activity['students']} students")
-        with col4:
-            st.markdown(f"🕐 {activity['time']}")
-        st.markdown("---")
 
 def signup_page():
-    """Enhanced signup page"""
     load_css()
     st.markdown("<h1 style='text-align: center;'>Join TAG Community</h1>", unsafe_allow_html=True)
     
@@ -526,9 +652,7 @@ def signup_page():
             password = st.text_input("🔒 Password *", type="password", placeholder="Min 6 characters")
             confirm_password = st.text_input("🔒 Confirm Password *", type="password", placeholder="Re-enter password")
             
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                submitted = st.form_submit_button("🚀 Create Account", use_container_width=True)
+            submitted = st.form_submit_button("🚀 Create Account", use_container_width=True)
             
             if submitted:
                 if not all([name, email, password, confirm_password]):
@@ -539,7 +663,7 @@ def signup_page():
                     st.error("❌ Password must be at least 6 characters long!")
                 else:
                     with st.spinner("Creating your account..."):
-                        time.sleep(1)  # Simulate processing
+                        time.sleep(1)
                         success, message = create_user(name, email, password)
                         if success:
                             st.success("✅ Account created successfully!")
@@ -552,16 +676,8 @@ def signup_page():
                             st.error(f"❌ {message}")
         
         st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Login link
-        st.markdown("""
-            <div style="text-align: center; margin-top: 1rem;">
-                Already have an account? <a href="#" onclick="alert('Click Login in sidebar')">Login here</a>
-            </div>
-        """, unsafe_allow_html=True)
 
 def login_page():
-    """Enhanced login page"""
     load_css()
     st.markdown("<h1 style='text-align: center;'>Welcome Back!</h1>", unsafe_allow_html=True)
     
@@ -576,9 +692,7 @@ def login_page():
             email = st.text_input("📧 Email *", placeholder="Enter your email")
             password = st.text_input("🔒 Password *", type="password", placeholder="Enter your password")
             
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                submitted = st.form_submit_button("🔐 Login", use_container_width=True)
+            submitted = st.form_submit_button("🔐 Login", use_container_width=True)
             
             if submitted:
                 if not all([email, password]):
@@ -604,7 +718,6 @@ def login_page():
         
         st.markdown("</div>", unsafe_allow_html=True)
         
-        # Demo credentials
         with st.expander("🔑 Demo Credentials"):
             st.markdown("""
                 **Admin Access:**  
@@ -612,71 +725,108 @@ def login_page():
                 - Password: `admin123`  
                 
                 **Student Access:**  
-                - Create your own account or use any test account
+                - Create your own account
             """)
 
 def student_dashboard():
-    """Enhanced student dashboard with real-time updates"""
     load_css()
     
-    # Auto-refresh every 10 seconds for real-time updates
     count = st_autorefresh(interval=10000, key="student_refresh")
     
-    # Welcome header with stats
     st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <h1>👋 Welcome, {st.session_state.user['name']}!</h1>
         </div>
     """, unsafe_allow_html=True)
     
-    # Get student's queries
     queries_df = get_student_queries(st.session_state.user['email'])
     
-    # Statistics cards
+    # Statistics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown("""
-            <div class="stat-card">
-                <h3>📊 Total Queries</h3>
-                <h2 style="color: #667eea;">{}</h2>
-            </div>
-        """.format(len(queries_df)), unsafe_allow_html=True)
-    
+        st.markdown(f"""<div class="stat-card"><h3>📊 Total Queries</h3><h2 style="color:#667eea;">{len(queries_df)}</h2></div>""", unsafe_allow_html=True)
     with col2:
         pending = len(queries_df[queries_df['status'] == 'pending']) if not queries_df.empty else 0
-        st.markdown("""
-            <div class="stat-card">
-                <h3>⏳ Pending</h3>
-                <h2 style="color: #ffa502;">{}</h2>
-            </div>
-        """.format(pending), unsafe_allow_html=True)
-    
+        st.markdown(f"""<div class="stat-card"><h3>⏳ Pending</h3><h2 style="color:#ffa502;">{pending}</h2></div>""", unsafe_allow_html=True)
     with col3:
         answered = len(queries_df[queries_df['status'] == 'answered']) if not queries_df.empty else 0
-        st.markdown("""
-            <div class="stat-card">
-                <h3>✅ Answered</h3>
-                <h2 style="color: #26de81;">{}</h2>
-            </div>
-        """.format(answered), unsafe_allow_html=True)
-    
+        st.markdown(f"""<div class="stat-card"><h3>✅ Answered</h3><h2 style="color:#26de81;">{answered}</h2></div>""", unsafe_allow_html=True)
     with col4:
-        st.markdown("""
-            <div class="stat-card">
-                <h3>📅 Joined</h3>
-                <h2 style="color: #778ca3;">{}</h2>
-            </div>
-        """.format(datetime.now().strftime("%b %Y")), unsafe_allow_html=True)
+        st.markdown(f"""<div class="stat-card"><h3>📅 Joined</h3><h2 style="color:#778ca3;">{datetime.now().strftime('%b %Y')}</h2></div>""", unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # Submit new query section
-    with st.expander("📝 Submit New Career Query", expanded=True):
-        st.markdown("""
-            <div style="background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); 
-                        padding: 1.5rem; border-radius: 15px;">
-        """, unsafe_allow_html=True)
+    # AI-Powered Query Assistant Section
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                    padding: 1.5rem; border-radius: 15px; margin-bottom: 1rem;">
+            <h3 style="color: white;">🤖 AI-Powered Query Assistant</h3>
+            <p style="color: white;">Type your query below and watch AI analyze it in real-time!</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Live NLP Analysis Preview
+    preview_message = st.text_area("✏️ Type your query here for AI analysis...", height=100, key="preview", 
+                                    placeholder="Example: I'm confused between Engineering and Medical. I like computers but also want to help people. What should I choose?")
+    
+    if preview_message and len(preview_message) > 10:
+        nlp_preview = simple_nlp_analysis(preview_message)
         
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            sentiment_class = get_sentiment_class(nlp_preview['sentiment'])
+            st.markdown(f"""
+                <div class="stat-card">
+                    <h4>💭 Sentiment</h4>
+                    <span class="badge {sentiment_class}">{nlp_preview['sentiment'].upper()}</span>
+                    <p style="font-size:0.8rem; margin-top:0.5rem;">{nlp_preview['sentiment_reason'] or 'Neutral'}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+                <div class="stat-card">
+                    <h4>🎯 Detected Career</h4>
+                    <span class="badge {get_badge_class(nlp_preview['detected_career'])}">{nlp_preview['detected_career']}</span>
+                    <p style="font-size:0.8rem;">Confidence: {'⭐' * nlp_preview['career_confidence']}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+                <div class="stat-card">
+                    <h4>🔧 Skills Detected</h4>
+                    <p style="font-size:0.9rem;">{', '.join(nlp_preview['detected_skills']) if nlp_preview['detected_skills'] else 'None detected'}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            urgency_color = "#e84118" if nlp_preview['urgency_score'] >= 4 else "#ffa502" if nlp_preview['urgency_score'] >= 3 else "#26de81"
+            st.markdown(f"""
+                <div class="stat-card">
+                    <h4>⚡ Urgency Score</h4>
+                    <h2 style="color:{urgency_color};">{nlp_preview['urgency_score']}/5</h2>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        # Show AI Suggestion
+        if nlp_preview['detected_career'] != 'Other':
+            insights = get_career_insights(nlp_preview['detected_career'])
+            with st.expander("💡 AI Career Insights", expanded=True):
+                st.markdown(f"""
+                    <div style="background: #f0f2f6; padding: 1rem; border-radius: 10px;">
+                        <p><strong>📚 Scope:</strong> {insights['scope']}</p>
+                        <p><strong>📝 Key Exams:</strong> {insights['exams']}</p>
+                        <p><strong>🏛️ Top Colleges:</strong> {insights['colleges']}</p>
+                        <p><strong>💰 Salary Range:</strong> {insights['salary_range']}</p>
+                        <p><strong>🔧 Key Skills:</strong> {insights['skills']}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Submit query form
+    with st.expander("📝 Submit New Career Query", expanded=True):
         with st.form("query_form"):
             col1, col2 = st.columns(2)
             
@@ -689,11 +839,10 @@ def student_dashboard():
             
             with col2:
                 phone = st.text_input("📞 Phone Number *", placeholder="10-digit mobile number")
-                st.markdown("<br>", unsafe_allow_html=True)
             
             message = st.text_area("💬 Your Query *", placeholder="Describe your career query in detail...", height=150)
             
-            submitted = st.form_submit_button("🚀 Submit Query", use_container_width=True)
+            submitted = st.form_submit_button("🚀 Submit Query with AI Analysis", use_container_width=True)
             
             if submitted:
                 if not all([student_name, career_type, phone, message]):
@@ -701,7 +850,7 @@ def student_dashboard():
                 elif len(phone) != 10 or not phone.isdigit():
                     st.error("❌ Please enter a valid 10-digit phone number!")
                 else:
-                    with st.spinner("Submitting your query..."):
+                    with st.spinner("AI is analyzing your query..."):
                         success, msg = save_query(student_name, st.session_state.user['email'], career_type, phone, message)
                         if success:
                             st.success("✅ " + msg)
@@ -710,24 +859,17 @@ def student_dashboard():
                             st.rerun()
                         else:
                             st.error("❌ " + msg)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
     
-    # Display previous queries with status
+    # Query history with NLP insights
     st.markdown("## 📋 Your Query History")
     
     if queries_df.empty:
-        st.info("🌟 You haven't submitted any queries yet. Use the form above to get started!")
+        st.info("🌟 You haven't submitted any queries yet. Use the AI assistant above!")
     else:
         for _, row in queries_df.iterrows():
-            # Status color
-            status_color = {
-                'pending': '#ffa502',
-                'answered': '#26de81',
-                'resolved': '#20bf6b'
-            }.get(row['status'], '#778ca3')
-            
+            status_color = {'pending': '#ffa502', 'answered': '#26de81', 'resolved': '#20bf6b'}.get(row['status'], '#778ca3')
             badge_class = get_badge_class(row['career_type'])
+            sentiment_class = get_sentiment_class(row.get('sentiment', 'neutral'))
             
             st.markdown(f"""
                 <div class="query-card">
@@ -735,19 +877,24 @@ def student_dashboard():
                         <div>
                             <span class="badge {badge_class}">{row['career_type']}</span>
                             <span class="badge" style="background-color: {status_color};">{row['status'].upper()}</span>
+                            <span class="badge {sentiment_class}">🧠 {row.get('sentiment', 'neutral').upper()}</span>
                         </div>
                         <small style="color: #999;">{row['date'][:10]}</small>
                     </div>
                     <p style="margin: 1rem 0; font-size: 1.1rem;">{row['message']}</p>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between;">
                         <small>📞 {row['phone']}</small>
                         <small>🆔 #{row['id']}</small>
                     </div>
             """, unsafe_allow_html=True)
             
+            # Show NLP insights if available
+            if row.get('urgency_score') and row['urgency_score'] >= 3:
+                st.warning(f"⚡ This query was marked as priority (Urgency: {row['urgency_score']}/5)")
+            
             if row['admin_response']:
                 st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 1rem; border-radius: 10px; margin-top: 1rem;">
+                    <div style="background-color: #e8f4fd; padding: 1rem; border-radius: 10px; margin-top: 1rem;">
                         <strong>👨‍🏫 Admin Response:</strong>
                         <p style="margin-top: 0.5rem;">{row['admin_response']}</p>
                     </div>
@@ -756,16 +903,13 @@ def student_dashboard():
             st.markdown("</div>", unsafe_allow_html=True)
 
 def admin_panel():
-    """Enhanced admin panel with real-time updates"""
     load_css()
     
-    # Auto-refresh every 5 seconds for real-time updates
     count = st_autorefresh(interval=5000, key="admin_refresh")
     
-    # Header with refresh indicator
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown("<h1>👑 Admin Dashboard</h1>", unsafe_allow_html=True)
+        st.markdown("<h1>👑 AI-Powered Admin Dashboard</h1>", unsafe_allow_html=True)
     with col2:
         st.markdown(f"""
             <div style="background: #f0f2f6; padding: 0.5rem; border-radius: 10px; text-align: center;">
@@ -773,84 +917,60 @@ def admin_panel():
             </div>
         """, unsafe_allow_html=True)
     
-    # Get all queries
     queries_df = get_all_queries()
     
-    # Statistics cards
-    st.markdown("## 📊 Platform Statistics")
-    col1, col2, col3, col4 = st.columns(4)
+    # Statistics with NLP insights
+    st.markdown("## 📊 AI-Powered Analytics")
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.markdown("""
-            <div class="stat-card">
-                <h3>📝 Total Queries</h3>
-                <h2 style="color: #667eea;">{}</h2>
-            </div>
-        """.format(len(queries_df)), unsafe_allow_html=True)
-    
+        st.markdown(f"""<div class="stat-card"><h3>📝 Total</h3><h2>{len(queries_df)}</h2></div>""", unsafe_allow_html=True)
     with col2:
         pending = len(queries_df[queries_df['status'] == 'pending']) if not queries_df.empty else 0
-        st.markdown("""
-            <div class="stat-card">
-                <h3>⏳ Pending</h3>
-                <h2 style="color: #ffa502;">{}</h2>
-            </div>
-        """.format(pending), unsafe_allow_html=True)
-    
+        st.markdown(f"""<div class="stat-card"><h3>⏳ Pending</h3><h2>{pending}</h2></div>""", unsafe_allow_html=True)
     with col3:
-        unique_students = queries_df['student_email'].nunique() if not queries_df.empty else 0
-        st.markdown("""
-            <div class="stat-card">
-                <h3>👥 Active Students</h3>
-                <h2 style="color: #26de81;">{}</h2>
-            </div>
-        """.format(unique_students), unsafe_allow_html=True)
-    
+        urgent = len(queries_df[queries_df['urgency_score'] >= 4]) if not queries_df.empty and 'urgency_score' in queries_df.columns else 0
+        st.markdown(f"""<div class="stat-card"><h3>🔴 Urgent</h3><h2 style="color:#e84118;">{urgent}</h2></div>""", unsafe_allow_html=True)
     with col4:
-        career_types = queries_df['career_type'].nunique() if not queries_df.empty else 0
-        st.markdown("""
-            <div class="stat-card">
-                <h3>🎯 Career Fields</h3>
-                <h2 style="color: #778ca3;">{}</h2>
-            </div>
-        """.format(career_types), unsafe_allow_html=True)
+        anxious = len(queries_df[queries_df['sentiment'] == 'anxious']) if not queries_df.empty and 'sentiment' in queries_df.columns else 0
+        st.markdown(f"""<div class="stat-card"><h3>😟 Anxious</h3><h2 style="color:#ff4757;">{anxious}</h2></div>""", unsafe_allow_html=True)
+    with col5:
+        unique = queries_df['student_email'].nunique() if not queries_df.empty else 0
+        st.markdown(f"""<div class="stat-card"><h3>👥 Students</h3><h2>{unique}</h2></div>""", unsafe_allow_html=True)
     
-    # Charts section
+    # Charts
     if not queries_df.empty:
         st.markdown("---")
         col1, col2 = st.columns(2)
         
         with col1:
-            # Career type distribution pie chart
             career_counts = queries_df['career_type'].value_counts().reset_index()
             career_counts.columns = ['Career Type', 'Count']
-            
-            fig = px.pie(career_counts, values='Count', names='Career Type', 
-                        title='Career Type Distribution',
-                        color_discrete_sequence=px.colors.sequential.Purples_r)
+            fig = px.pie(career_counts, values='Count', names='Career Type', title='Career Distribution')
             fig.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            # Queries over time
-            queries_df['date_only'] = pd.to_datetime(queries_df['date']).dt.date
-            daily_counts = queries_df.groupby('date_only').size().reset_index(name='count')
-            
-            fig = px.line(daily_counts, x='date_only', y='count', 
-                         title='Daily Query Volume',
-                         markers=True)
-            fig.update_traces(line_color='#667eea')
-            st.plotly_chart(fig, use_container_width=True)
+            if 'sentiment' in queries_df.columns:
+                sentiment_counts = queries_df['sentiment'].value_counts().reset_index()
+                sentiment_counts.columns = ['Sentiment', 'Count']
+                fig = px.bar(sentiment_counts, x='Sentiment', y='Count', title='Student Sentiment Analysis', color='Sentiment')
+                st.plotly_chart(fig, use_container_width=True)
     
-    # Real-time queries table
+    # Queries feed
     st.markdown("---")
-    st.markdown("## 📋 Live Queries Feed")
+    st.markdown("## 📋 Live Queries Feed with AI Insights")
     
     if queries_df.empty:
-        st.info("📭 No queries in the database yet.")
+        st.info("📭 No queries yet")
     else:
-        # Display each query as a card with admin actions
-        for idx, row in queries_df.iterrows():
+        # Sort by urgency
+        if 'urgency_score' in queries_df.columns:
+            queries_df = queries_df.sort_values('urgency_score', ascending=False)
+        
+        for _, row in queries_df.iterrows():
+            urgency_badge = "🔴 URGENT" if row.get('urgency_score', 0) >= 4 else "🟡 HIGH" if row.get('urgency_score', 0) >= 3 else "🟢 NORMAL"
+            
             with st.container():
                 col1, col2 = st.columns([3, 1])
                 
@@ -860,17 +980,27 @@ def admin_panel():
                                     border-left: 5px solid #667eea; margin-bottom: 1rem;">
                             <div style="display: flex; justify-content: space-between;">
                                 <strong>👤 {row['student_name']}</strong>
-                                <small>🕐 {row['date']}</small>
+                                <small>{urgency_badge} | 🕐 {row['date']}</small>
                             </div>
                             <p><strong>📧 Email:</strong> {row['student_email']}</p>
-                            <p><strong>📞 Phone:</strong> {row['phone']}</p>
                             <p><strong>🎯 Career:</strong> {row['career_type']}</p>
                             <p><strong>💬 Message:</strong> {row['message']}</p>
                     """, unsafe_allow_html=True)
                     
+                    # Show NLP insights
+                    if row.get('sentiment'):
+                        sentiment_class = get_sentiment_class(row['sentiment'])
+                        st.markdown(f"""
+                            <div style="background: #f8f9fa; padding: 0.5rem; border-radius: 5px; margin-top: 0.5rem;">
+                                <small>🧠 AI Analysis: <span class="badge {sentiment_class}">{row['sentiment'].upper()}</span>
+                                | Urgency: {row.get('urgency_score', 1)}/5 
+                                | Skills: {row.get('detected_skills', '[]')}</small>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    
                     if row['admin_response']:
                         st.markdown(f"""
-                            <div style="background: #e8f4fd; padding: 0.5rem; border-radius: 5px;">
+                            <div style="background: #e8f4fd; padding: 0.5rem; border-radius: 5px; margin-top: 0.5rem;">
                                 <strong>✅ Response:</strong> {row['admin_response']}
                             </div>
                         """, unsafe_allow_html=True)
@@ -878,7 +1008,12 @@ def admin_panel():
                     st.markdown("</div>", unsafe_allow_html=True)
                 
                 with col2:
-                    # Status selector
+                    # AI response suggestion
+                    if st.button("🤖 AI Suggest", key=f"ai_suggest_{row['id']}", use_container_width=True):
+                        nlp_result = simple_nlp_analysis(row['message'])
+                        suggestion = generate_smart_response(row['message'], nlp_result)
+                        st.info(f"💡 AI Suggestion: {suggestion}")
+                    
                     current_status = row['status']
                     new_status = st.selectbox(
                         "Status",
@@ -887,34 +1022,22 @@ def admin_panel():
                         key=f"status_{row['id']}"
                     )
                     
-                    # Response text area
-                    response = st.text_area(
-                        "Response",
-                        value=row['admin_response'] if row['admin_response'] else "",
-                        key=f"resp_{row['id']}",
-                        height=100
-                    )
+                    response = st.text_area("Response", value=row['admin_response'] if row['admin_response'] else "", key=f"resp_{row['id']}", height=80)
                     
-                    # Update button
                     if st.button("📤 Update", key=f"update_{row['id']}", use_container_width=True):
                         if update_query_status(row['id'], new_status, response):
                             st.success("✅ Updated!")
-                            time.sleep(1)
                             st.rerun()
                     
-                    # Delete button
                     if st.button("🗑️ Delete", key=f"del_{row['id']}", use_container_width=True):
                         if delete_query(row['id']):
                             st.success("✅ Deleted!")
-                            time.sleep(1)
                             st.rerun()
                 
                 st.markdown("---")
 
 def notifications_page():
-    """Display notifications for user"""
     load_css()
-    
     st.markdown("<h1>🔔 Notifications</h1>", unsafe_allow_html=True)
     
     notifications = get_unread_notifications(st.session_state.user['id'])
@@ -923,19 +1046,12 @@ def notifications_page():
         st.info("📭 No new notifications")
     else:
         for notif in notifications:
-            icon = {
-                'info': '📌',
-                'success': '✅',
-                'warning': '⚠️',
-                'error': '❌'
-            }.get(notif[4], '📌')
-            
             st.markdown(f"""
                 <div style="background: white; padding: 1rem; border-radius: 10px; 
                             margin-bottom: 1rem; border-left: 5px solid #667eea;">
                     <div style="display: flex; justify-content: space-between;">
-                        <span>{icon} {notif[3]}</span>
-                        <small>{notif[6]}</small>
+                        <span>{notif[3]}</span>
+                        <small>{notif[6] if len(notif) > 6 else 'Just now'}</small>
                     </div>
                 </div>
             """, unsafe_allow_html=True)
@@ -943,132 +1059,51 @@ def notifications_page():
         if st.button("Mark all as read", use_container_width=True):
             mark_notifications_read(st.session_state.user['id'])
             st.success("✅ Notifications marked as read")
-            time.sleep(1)
             st.rerun()
 
 def about_page():
-    """Enhanced about page"""
     load_css()
-    
-    st.markdown("<h1>ℹ️ About TAG</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>ℹ️ About TAG with AI</h1>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
             <div class="stat-card">
-                <h3>🎯 Our Mission</h3>
-                <p>To democratize career guidance for government school students across India, 
-                ensuring every student has access to quality counseling and information about 
-                various career paths.</p>
-            </div>
-            
-            <div class="stat-card">
-                <h3>👁️ Our Vision</h3>
-                <p>A future where no student is left behind due to lack of guidance, and every 
-                government school student can make informed career decisions.</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-            <div class="stat-card">
-                <h3>🌟 What We Offer</h3>
-                <ul style="list-style-type: none; padding-left: 0;">
-                    <li>✓ Free career counseling</li>
-                    <li>✓ Expert guidance</li>
-                    <li>✓ Personalized queries</li>
-                    <li>✓ Resource library</li>
-                    <li>✓ Mentorship programs</li>
+                <h3>🤖 AI-Powered Features</h3>
+                <ul>
+                    <li>Smart career path detection</li>
+                    <li>Sentiment analysis for student queries</li>
+                    <li>Urgency scoring system</li>
+                    <li>Skill extraction from text</li>
+                    <li>AI-generated response suggestions</li>
                 </ul>
             </div>
-            
-            <div class="stat-card">
-                <h3>📞 Contact Us</h3>
-                <p>📧 Email: support@tagplatform.com</p>
-                <p>📞 Phone: +91 1234567890</p>
-                <p>🏢 Address: TAG Foundation, New Delhi</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    # Team section
-    st.markdown("---")
-    st.markdown("## 👥 Our Team")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown("""
-            <div style="text-align: center;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                            width: 100px; height: 100px; border-radius: 50%; margin: 0 auto; 
-                            display: flex; align-items: center; justify-content: center;">
-                    <span style="color: white; font-size: 2rem;">👩‍🏫</span>
-                </div>
-                <h4>Dr. Priya Sharma</h4>
-                <p style="color: #666;">Founder & Director</p>
-            </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
-            <div style="text-align: center;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                            width: 100px; height: 100px; border-radius: 50%; margin: 0 auto;
-                            display: flex; align-items: center; justify-content: center;">
-                    <span style="color: white; font-size: 2rem;">👨‍🔬</span>
-                </div>
-                <h4>Prof. Rajesh Kumar</h4>
-                <p style="color: #666;">Career Counselor</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-            <div style="text-align: center;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                            width: 100px; height: 100px; border-radius: 50%; margin: 0 auto;
-                            display: flex; align-items: center; justify-content: center;">
-                    <span style="color: white; font-size: 2rem;">👩‍💻</span>
-                </div>
-                <h4>Anjali Singh</h4>
-                <p style="color: #666;">Technical Lead</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown("""
-            <div style="text-align: center;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                            width: 100px; height: 100px; border-radius: 50%; margin: 0 auto;
-                            display: flex; align-items: center; justify-content: center;">
-                    <span style="color: white; font-size: 2rem;">👨‍🏫</span>
-                </div>
-                <h4>Vikram Patel</h4>
-                <p style="color: #666;">Student Mentor</p>
+            <div class="stat-card">
+                <h3>🎯 Our Mission</h3>
+                <p>Using AI to make career guidance accessible, personalized, and efficient for every government school student.</p>
             </div>
         """, unsafe_allow_html=True)
 
 # ==================== MAIN APP ====================
 def main():
-    """Main application controller"""
-    
-    # Initialize database and session
     init_database()
     init_session()
     
-    # Sidebar navigation with enhanced UI
     with st.sidebar:
         st.markdown("""
             <div style="text-align: center; padding: 1rem;">
                 <h1 style="color: white; margin: 0;">🎯 TAG</h1>
-                <p style="color: rgba(255,255,255,0.8);">Together Achieve Growth</p>
+                <p style="color: rgba(255,255,255,0.8);">AI-Powered Career Guidance</p>
             </div>
         """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # Navigation options
         menu_options = ['Home', 'About']
         
         if not st.session_state.logged_in:
@@ -1079,16 +1114,7 @@ def main():
             else:
                 menu_options.extend(['Dashboard', 'Notifications'])
         
-        # Page selection with icons
-        page_icons = {
-            'Home': '🏠',
-            'About': 'ℹ️',
-            'Login': '🔐',
-            'Sign Up': '📝',
-            'Dashboard': '📊',
-            'Admin': '👑',
-            'Notifications': '🔔'
-        }
+        page_icons = {'Home': '🏠', 'About': 'ℹ️', 'Login': '🔐', 'Sign Up': '📝', 'Dashboard': '📊', 'Admin': '👑', 'Notifications': '🔔'}
         
         for option in menu_options:
             icon = page_icons.get(option, '📌')
@@ -1096,12 +1122,10 @@ def main():
                 st.session_state.page = option
                 st.rerun()
         
-        # Show notification badge if logged in
         if st.session_state.logged_in:
             st.markdown("---")
             notification_badge()
             
-            # User info
             st.markdown(f"""
                 <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 10px;">
                     <p style="color: white; margin: 0;">👤 Logged in as:</p>
@@ -1134,14 +1158,14 @@ def main():
         if st.session_state.logged_in and st.session_state.user['role'] == 'student':
             student_dashboard()
         else:
-            st.warning("Please login as student to access dashboard")
+            st.warning("Please login as student")
             st.session_state.page = 'Login'
             st.rerun()
     elif st.session_state.page == 'Admin':
         if st.session_state.logged_in and st.session_state.user['role'] == 'admin':
             admin_panel()
         else:
-            st.warning("Unauthorized access! Please login as admin.")
+            st.warning("Unauthorized access")
             st.session_state.page = 'Login'
             st.rerun()
     elif st.session_state.page == 'Notifications':
